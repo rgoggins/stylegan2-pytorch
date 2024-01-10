@@ -517,9 +517,9 @@ class Generator(nn.Module):
         print("Dimensionality of input low res images to forward pass of generator is: " + str(low_res_images.shape))
         print("Dimensionality of input embeddings to forward pass of generator is: " + str(embeds_for_low_res_imgs.shape))
         
-        if not input_is_latent:
-            # removing the call to the mapping network
-            embeds_for_low_res_imgs = [s for s in embeds_for_low_res_imgs]
+        # if not input_is_latent:
+        #     # removing the call to the mapping network
+        #     embeds_for_low_res_imgs = [s for s in embeds_for_low_res_imgs]
 
         # We generate the noise randomly, we can try seeding this in the future for reproducibility
         if noise is None:
@@ -544,24 +544,26 @@ class Generator(nn.Module):
         #     styles = style_t
 
         # I think we still need this to process/reshape our embeddings to make sure they fit
-        if len(embeds_for_low_res_imgs) < 2:
-            inject_index = self.n_latent
+        # if len(embeds_for_low_res_imgs) < 2:
+        #     inject_index = self.n_latent
 
-            if embeds_for_low_res_imgs[0].ndim < 3:
-                latent = embeds_for_low_res_imgs[0].unsqueeze(1).repeat(1, inject_index, 1)
+        #     if embeds_for_low_res_imgs[0].ndim < 3:
+        #         latent = embeds_for_low_res_imgs[0].unsqueeze(1).repeat(1, inject_index, 1)
 
-            else:
-                latent = embeds_for_low_res_imgs[0]
+        #     else:
+        #         latent = embeds_for_low_res_imgs[0]
 
-        else:
-            if inject_index is None:
-                inject_index = random.randint(1, self.n_latent - 1)
+        # we don't need this portion because our embedding will be the same across
+        # all of our layers
+        # else:
+        #     if inject_index is None:
+        #         inject_index = random.randint(1, self.n_latent - 1)
 
-            latent = embeds_for_low_res_imgs[0].unsqueeze(1).repeat(1, inject_index, 1)
-            latent2 = embeds_for_low_res_imgs[1].unsqueeze(1).repeat(1, self.n_latent - inject_index, 1)
+        #     latent = embeds_for_low_res_imgs[0].unsqueeze(1).repeat(1, inject_index, 1)
+        #     latent2 = embeds_for_low_res_imgs[1].unsqueeze(1).repeat(1, self.n_latent - inject_index, 1)
 
-            latent = torch.cat([latent, latent2], 1)
-
+        #     latent = torch.cat([latent, latent2], 1)
+        latent = embeds_for_low_res_imgs
         # OUT is our input
         # out = self.input(latent) # self.input is our constant network, no need anymore
         out = self.conv1(low_res_images, latent[:, 0], noise=noise[0])
@@ -572,9 +574,9 @@ class Generator(nn.Module):
         for conv1, conv2, noise1, noise2, to_rgb in zip(
             self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
         ):
-            out = conv1(out, latent[:, i], noise=noise1)
-            out = conv2(out, latent[:, i + 1], noise=noise2)
-            skip = to_rgb(out, latent[:, i + 2], skip)
+            out = conv1(out, latent, noise=noise1)
+            out = conv2(out, latent, noise=noise2)
+            skip = to_rgb(out, latent, skip)
 
             i += 2
 
