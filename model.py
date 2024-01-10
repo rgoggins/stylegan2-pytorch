@@ -413,6 +413,7 @@ class Generator(nn.Module):
                 )
             )
 
+        # self.style here is the mapping network
         self.style = nn.Sequential(*layers)
 
         self.channels = {

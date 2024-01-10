@@ -12,12 +12,68 @@ import torch.distributed as dist
 from torchvision import transforms, utils
 from tqdm import tqdm
 
+import webdataset as wds
+import importlib
+wds = importlib.reload(wds)
+url = 'pipe:aws s3 cp s3://laion-super-resolution/{00000..16000}.tar - --endpoint-url=https://s3.eu-central-1.wasabisys.com'
+
+def identity(x):
+    return x
+
+class ResizeIfSmaller(object):
+    """Crop randomly the image in a sample.
+
+    Args:
+        output_size (tuple or int): Desired output size. If int, square crop
+            is made.
+    """
+
+    def __init__(self, image_size):
+        self.image_size = image_size
+
+    def __call__(self, sample):
+        H, W = sample.size
+
+        if H < self.image_size or W < self.image_size:
+            return transforms.Resize(self.image_size)(sample)
+        else:
+            return sample
+
+
+image_size=256
+
+preproc = transforms.Compose([
+    ResizeIfSmaller(image_size),
+    #transforms.RandomChoice([
+    transforms.RandomCrop(image_size),
+        #transforms.Resize((image_size, image_size)),
+    #]),
+    #transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+])
+
+dataset_darius = (
+    wds.WebDataset(url)
+    .shuffle(32)
+    .decode("pil")
+    .to_tuple("jpg", "json")
+    .map_tuple(preproc, identity)
+    #.batched(32)
+)
+
+def collate_fn(batch):
+    images = torch.cat([x[0].unsqueeze(0) for x in batch], dim=0)
+    js = [x[1] for x in batch]
+    return images, js
+
+dloader = torch.utils.data.DataLoader(dataset_darius, batch_size=32, num_workers=16, prefetch_factor=4, pin_memory=True, collate_fn = collate_fn)
+
+
 try:
     import wandb
-
 except ImportError:
     wandb = None
-
 
 from dataset import MultiResolutionDataset
 from distributed import (
@@ -167,12 +223,17 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
             break
 
         real_img = next(loader)
+        print("Value of real_img: " + str(real_img))
+        exit(0)
+        # should be a batch
         real_img = real_img.to(device)
 
         requires_grad(generator, False)
         requires_grad(discriminator, True)
 
         noise = mixing_noise(args.batch, args.latent, args.mixing, device)
+
+        # adjust generator to take in low-res photo and latent representation in the place of noise
         fake_img, _ = generator(noise)
 
         if args.augment:
@@ -518,12 +579,13 @@ if __name__ == "__main__":
     )
 
     dataset = MultiResolutionDataset(args.path, transform, args.size)
-    loader = data.DataLoader(
-        dataset,
-        batch_size=args.batch,
-        sampler=data_sampler(dataset, shuffle=True, distributed=args.distributed),
-        drop_last=True,
-    )
+    loader = dloader
+    # data.DataLoader(
+    #     dataset,
+    #     batch_size=args.batch,
+    #     sampler=data_sampler(dataset, shuffle=True, distributed=args.distributed),
+    #     drop_last=True,
+    # )
 
     if get_rank() == 0 and wandb is not None and args.wandb:
         wandb.init(project="stylegan 2")
