@@ -494,9 +494,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wandb", action="store_true", help="use weights and biases logging"
     )
-    parser.add_argument(
-        "--local_rank", type=int, default=0, help="local rank for distributed training"
-    )
+    # parser.add_argument(
+    #     "--local_rank", type=int, default=0, help="local rank for distributed training"
+    # )
     parser.add_argument(
         "--augment", action="store_true", help="apply non leaking augmentation"
     )
