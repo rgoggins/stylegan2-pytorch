@@ -257,11 +257,11 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
         img_64 = generate_low_res_versions(real_img,4) # 32, 3, 64, 64
         real_img_128 = generate_low_res_versions(real_img,2) # 32, 3, 128, 128
 
-        img_64 = img_64.to(device)
         real_img_128 = real_img_128.to(device)
 
         # Generate embeddings for img64 (need to resize to 224)
         embeds_for_low_res_imgs = gen_embeds(img_64)
+        img_64 = img_64.to(device)
         embeds_for_low_res_imgs = embeds_for_low_res_imgs.to(device)
 
         # TRAIN GENERATOR:
