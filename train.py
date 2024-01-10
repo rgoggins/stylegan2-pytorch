@@ -200,6 +200,7 @@ def generate_low_res_versions(real_images,multiplier):
     return resized_images
 
 def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, device):
+    print("Beginning train func.")
     loader = sample_data(loader)
 
     pbar = range(args.iter)
@@ -425,6 +426,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
 
 
 if __name__ == "__main__":
+    print("Running main")
     device = "cuda"
 
     parser = argparse.ArgumentParser(description="StyleGAN2 trainer")
@@ -525,6 +527,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    args.local_rank = int(os.environ['LOCAL_RANK'])
+
+    print("Parsed args successfully")
+
     n_gpu = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
     args.distributed = n_gpu > 1
 
@@ -539,6 +545,7 @@ if __name__ == "__main__":
     args.start_iter = 0
 
     if args.arch == 'stylegan2':
+        print("Creating an instance of stylegan2...")
         from model import Generator, Discriminator
 
     elif args.arch == 'swagan':
@@ -547,9 +554,11 @@ if __name__ == "__main__":
     generator = Generator(
         args.size, args.latent, args.n_mlp, channel_multiplier=args.channel_multiplier
     ).to(device)
+    print("Created generator")
     discriminator = Discriminator(
         args.size, channel_multiplier=args.channel_multiplier
     ).to(device)
+    print("Created discriminator")
     g_ema = Generator(
         args.size, args.latent, args.n_mlp, channel_multiplier=args.channel_multiplier
     ).to(device)
@@ -569,6 +578,7 @@ if __name__ == "__main__":
         lr=args.lr * d_reg_ratio,
         betas=(0 ** d_reg_ratio, 0.99 ** d_reg_ratio),
     )
+    print("Created optimizers")
 
     if args.ckpt is not None:
         print("load model:", args.ckpt)
@@ -589,6 +599,7 @@ if __name__ == "__main__":
         g_optim.load_state_dict(ckpt["g_optim"])
         d_optim.load_state_dict(ckpt["d_optim"])
 
+    print("Setting up distributed training")
     if args.distributed:
         generator = nn.parallel.DistributedDataParallel(
             generator,
@@ -603,7 +614,7 @@ if __name__ == "__main__":
             output_device=args.local_rank,
             broadcast_buffers=False,
         )
-
+    print("Done setting up distributed training")
     transform = transforms.Compose(
         [
             transforms.RandomHorizontalFlip(),
@@ -612,7 +623,7 @@ if __name__ == "__main__":
         ]
     )
 
-    dataset = MultiResolutionDataset(args.path, transform, args.size)
+    # dataset = MultiResolutionDataset(args.path, transform, args.size)
     loader = dloader
     # data.DataLoader(
     #     dataset,
