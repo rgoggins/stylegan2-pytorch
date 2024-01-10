@@ -11,6 +11,7 @@ from torch.utils import data
 import torch.distributed as dist
 from torchvision import transforms, utils
 from tqdm import tqdm
+import lpips
 
 import webdataset as wds
 import importlib
@@ -137,11 +138,13 @@ def d_r1_loss(real_pred, real_img):
     return grad_penalty
 
 
-def g_nonsaturating_loss(fake_pred):
-    loss = F.softplus(-fake_pred).mean()
+def g_wgan(fake_pred):
+    return -1.0*fake_pred
 
-    return loss
-
+def combined_g_loss(fake_pred, images_upscaled_by_generator, real_images):
+    # we want to combine wass loss + lpips w/vgg
+    loss_fn_vgg = lpips.LPIPS(net='vgg')
+    return loss_fn_vgg(real_images, images_upscaled_by_generator) * 100.0 + g_wgan(fake_pred)
 
 def g_path_regularize(fake_img, latents, mean_path_length, decay=0.01):
     noise = torch.randn_like(fake_img) / math.sqrt(
@@ -252,72 +255,16 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
         embeds_for_low_res_imgs = gen_embeds(img_64)
         embeds_for_low_res_imgs = embeds_for_low_res_imgs.to(device)
 
-        requires_grad(generator, False)
-        requires_grad(discriminator, True)
-
-        # We do not need latents
-        # noise = mixing_noise(args.batch, args.latent, args.mixing, device)
-
-        # adjust generator to take in low-res photo and latent representation in the place of noise
-        fake_img_128, _ = generator(img_64, embeds_for_low_res_imgs)
-
-        # if args.augment:
-        #     real_img_aug, _ = augment(real_img, ada_aug_p)
-        #     fake_img, _ = augment(fake_img, ada_aug_p)
-
-        # else:
-        #     real_img_aug = real_img
-
-        fake_pred = discriminator(fake_img_128)
-        real_pred = discriminator(real_img_128)
-
-        # Compute discriminator loss (wasserstein loss)
-        d_loss = d_wgan(real_pred, fake_pred)
-
-        loss_dict["d"] = d_loss
-        loss_dict["real_score"] = real_pred.mean()
-        loss_dict["fake_score"] = fake_pred.mean()
-
-        discriminator.zero_grad()
-        d_loss.backward()
-        d_optim.step()
-
-        if args.augment and args.augment_p == 0:
-            ada_aug_p = ada_augment.tune(real_pred)
-            r_t_stat = ada_augment.r_t_stat
-
-        d_regularize = i % args.d_reg_every == 0
-
-        if d_regularize:
-            real_img.requires_grad = True
-
-            if args.augment:
-                real_img_aug, _ = augment(real_img, ada_aug_p)
-
-            else:
-                real_img_aug = real_img
-
-            real_pred = discriminator(real_img_aug)
-            r1_loss = d_r1_loss(real_pred, real_img)
-
-            discriminator.zero_grad()
-            (args.r1 / 2 * r1_loss * args.d_reg_every + 0 * real_pred[0]).backward()
-
-            d_optim.step()
-
-        loss_dict["r1"] = r1_loss
+        # TRAIN GENERATOR:
 
         requires_grad(generator, True)
         requires_grad(discriminator, False)
 
-        noise = mixing_noise(args.batch, args.latent, args.mixing, device)
-        fake_img, _ = generator(noise)
+        fake_img_128, _ = generator(img_64, embeds_for_low_res_imgs)
 
-        if args.augment:
-            fake_img, _ = augment(fake_img, ada_aug_p)
+        fake_pred = discriminator(fake_img_128)
 
-        fake_pred = discriminator(fake_img)
-        g_loss = g_nonsaturating_loss(fake_pred)
+        g_loss = combined_g_loss(fake_pred, fake_img_128, real_img_128)
 
         loss_dict["g"] = g_loss
 
@@ -352,6 +299,66 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
 
         loss_dict["path"] = path_loss
         loss_dict["path_length"] = path_lengths.mean()
+
+        # TRAIN DISCRIMINATOR:
+
+        requires_grad(generator, False)
+        # ensure that we train them separately
+        # so that updates take most recent changes + for stability
+        requires_grad(discriminator, True)
+
+        # We do not need latents
+        # noise = mixing_noise(args.batch, args.latent, args.mixing, device)
+
+        # adjust generator to take in low-res photo and latent representation in the place of noise
+        real_pred = discriminator(real_img_128)
+
+        # Compute discriminator loss (wasserstein loss)
+
+        # these are preds on the fake images generated from the generator one step ago
+        d_loss = d_wgan(real_pred, fake_pred)
+        
+        # need to clamp weights so preserve disc being 1-lipschitz fn
+        # we should do this with gradient penalty though for better
+        # stability
+        # for p in discriminator.parameters():
+        #     p.data.clamp_(-0.01, 0.01)
+        wgan_epsilon = 0.001
+        epsilon_penalty = torch.mean(real_pred ** 2)
+        d_loss += epsilon_penalty * wgan_epsilon
+
+        loss_dict["d"] = d_loss
+        loss_dict["real_score"] = real_pred.mean()
+        loss_dict["fake_score"] = fake_pred.mean()
+
+        discriminator.zero_grad()
+        d_loss.backward()
+        d_optim.step()
+
+        if args.augment and args.augment_p == 0:
+            ada_aug_p = ada_augment.tune(real_pred)
+            r_t_stat = ada_augment.r_t_stat
+
+        d_regularize = i % args.d_reg_every == 0
+
+        if d_regularize:
+            real_img.requires_grad = True
+
+            if args.augment:
+                real_img_aug, _ = augment(real_img, ada_aug_p)
+
+            else:
+                real_img_aug = real_img
+
+            real_pred = discriminator(real_img_aug)
+            r1_loss = d_r1_loss(real_pred, real_img)
+
+            discriminator.zero_grad()
+            (args.r1 / 2 * r1_loss * args.d_reg_every + 0 * real_pred[0]).backward()
+
+            d_optim.step()
+
+        loss_dict["r1"] = r1_loss
 
         accumulate(g_ema, g_module, accum)
 
