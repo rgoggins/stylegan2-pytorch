@@ -11,7 +11,7 @@ from torch.utils import data
 import torch.distributed as dist
 from torchvision import transforms, utils
 from tqdm import tqdm
-import lpips
+from lpips import PerceptualLoss
 
 import webdataset as wds
 import importlib
@@ -143,8 +143,8 @@ def g_wgan(fake_pred):
 
 def combined_g_loss(fake_pred, images_upscaled_by_generator, real_images):
     # we want to combine wass loss + lpips w/vgg
-    loss_fn_vgg = lpips.LPIPS(net='vgg')
-    return loss_fn_vgg(real_images, images_upscaled_by_generator) * 100.0 + g_wgan(fake_pred)
+    loss_fn_vgg = PerceptualLoss(net='vgg')
+    return loss_fn_vgg(images_upscaled_by_generator, real_images) * 100.0 + g_wgan(fake_pred)
 
 def g_path_regularize(fake_img, latents, mean_path_length, decay=0.01):
     noise = torch.randn_like(fake_img) / math.sqrt(
