@@ -178,6 +178,8 @@ def set_grad_none(model, targets):
         if n in targets:
             p.grad = None
 
+def generate_low_res_versions(real_image):
+    pass
 
 def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, device):
     loader = sample_data(loader)
@@ -224,8 +226,9 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
 
         real_img = next(loader)
         print("Value of real_img: " + str(real_img))
-        exit(0)
-        # should be a batch
+        low_res_real_img = generate_low_res_versions(real_img)
+
+
         real_img = real_img.to(device)
 
         requires_grad(generator, False)

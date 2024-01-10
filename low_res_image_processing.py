@@ -52,7 +52,7 @@ dataset = (
     .decode("pil")
     .to_tuple("jpg", "json")
     .map_tuple(preproc, identity)
-    #.batched(32)
+    .batched(32) # we want this to be batched
 )
 
 def collate_fn(batch):
@@ -63,4 +63,7 @@ def collate_fn(batch):
 dloader = torch.utils.data.DataLoader(dataset, batch_size=32, num_workers=16, prefetch_factor=4, pin_memory=True, collate_fn = collate_fn)
 
 for img, js in tqdm(dloader):
-    print("IMg: " + str(img))
+    print("Image has shape: " + str(img))
+    print("type: " + str(type(img)))
+    print("Shape: " + str(img.shape))
+    exit(0)
