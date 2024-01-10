@@ -150,6 +150,9 @@ class EqualLinear(nn.Module):
 
     def forward(self, input):
         if self.activation:
+            # input is (672, 224)
+            # self.weight is out_dim,in_dim (512, 512)
+            # self.scale is scalar
             out = F.linear(input, self.weight * self.scale)
             out = fused_leaky_relu(out, self.bias * self.lr_mul)
 
@@ -391,9 +394,9 @@ class ToRGB(nn.Module):
 class Generator(nn.Module):
     def __init__(
         self,
-        size,
-        style_dim,
-        n_mlp,
+        size, #                     256
+        style_dim, #                512
+        n_mlp, #                    8
         channel_multiplier=2,
         blur_kernel=[1, 3, 3, 1],
         lr_mlp=0.01,
@@ -407,6 +410,7 @@ class Generator(nn.Module):
         layers = [PixelNorm()]
 
         for i in range(n_mlp):
+            # all of these layers are 512 x 512
             layers.append(
                 EqualLinear(
                     style_dim, style_dim, lr_mul=lr_mlp, activation="fused_lrelu"
@@ -428,7 +432,7 @@ class Generator(nn.Module):
             1024: 16 * channel_multiplier,
         }
 
-        self.input = ConstantInput(self.channels[4])
+        # self.input = ConstantInput(self.channels[4])
         self.conv1 = StyledConv(
             self.channels[4], self.channels[4], 3, style_dim, blur_kernel=blur_kernel
         )
@@ -510,8 +514,12 @@ class Generator(nn.Module):
         noise=None,
         randomize_noise=True,
     ):
+        print("Dimensionality of input low res images to forward pass of generator is: " + str(low_res_images.shape))
+        print("Dimensionality of input embeddings to forward pass of generator is: " + str(embeds_for_low_res_imgs.shape))
+        
         if not input_is_latent:
-            embeds_for_low_res_imgs = [self.style(s) for s in embeds_for_low_res_imgs]
+            # removing the call to the mapping network
+            embeds_for_low_res_imgs = [s for s in embeds_for_low_res_imgs]
 
         # We generate the noise randomly, we can try seeding this in the future for reproducibility
         if noise is None:
