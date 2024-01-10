@@ -193,7 +193,7 @@ def gen_embeds(real_images):
 
 def generate_low_res_versions(real_images,multiplier):
     # real_images is a list (images,js)
-    _,_,w,h = real_images[0].shape
+    _,_,w,h = real_images.shape
     resized_images = F.interpolate(real_images,
                                    size=(w // multiplier, h // multiplier),
                                    mode='bilinear',
@@ -244,7 +244,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
 
             break
 
-        real_img = next(loader)
+        real_img = next(loader)[0] # index into collation
         # print("Value of real_img: " + str(real_img))
         # real_img torch.Tensor [32,3,256,256]
         img_64 = generate_low_res_versions(real_img,4) # 32, 3, 64, 64
