@@ -134,7 +134,7 @@ class EqualLinear(nn.Module):
         self, in_dim, out_dim, bias=True, bias_init=0, lr_mul=1, activation=None
     ):
         super().__init__()
-
+        print("Equal linear created for weight matrix " + str(out_dim) + "," + str(in_dim))
         self.weight = nn.Parameter(torch.randn(out_dim, in_dim).div_(lr_mul))
 
         if bias:
@@ -149,12 +149,14 @@ class EqualLinear(nn.Module):
         self.lr_mul = lr_mul
 
     def forward(self, input):
+        print("Weight matrix for (self.modulation) is of shape: " + str(self.weight.shape))
+        print("Input shape to self.modulation is " + str(input.shape))
+        print("Note: the first param should be embedding dim, second should be in_channel")
         if self.activation:
             # 7168 =32 * 224
             # input is (7168, 224)
             # self.weight is out_dim,in_dim (512, 512)
             # self.scale is scalar
-            print("Input dimension")
             out = F.linear(input, self.weight * self.scale)
             out = fused_leaky_relu(out, self.bias * self.lr_mul)
 
@@ -231,8 +233,10 @@ class ModulatedConv2d(nn.Module):
 
     def forward(self, input, style):
         batch, in_channel, height, width = input.shape
+        # style is not meant to be 
 
         if not self.fused:
+            print("NOT SELF FUSED")
             weight = self.scale * self.weight.squeeze(0)
             style = self.modulation(style)
 
@@ -260,8 +264,13 @@ class ModulatedConv2d(nn.Module):
                 out = out * dcoefs.view(batch, -1, 1, 1)
 
             return out
+        else:
+            print("SELF FUSED")
 
-        # this is where it breaks, 
+        # this is where it breaks,
+        # do we want to do modulation?
+        print("Shape of style going in: " + str(style.shape))
+        print("Why is in_channel 3 here?") 
         style = self.modulation(style).view(batch, 1, in_channel, 1, 1)
         weight = self.scale * self.weight * style
 
@@ -425,7 +434,7 @@ class Generator(nn.Module):
         self.style = nn.Sequential(*layers)
 
         self.channels = {
-            4: 512,
+            4: 512, #why do we start with 512
             8: 512,
             16: 512,
             32: 512,
@@ -529,6 +538,7 @@ class Generator(nn.Module):
         # We generate the noise randomly, we can try seeding this in the future for reproducibility
         if noise is None:
             if randomize_noise:
+                # setting it to none means it gets randomly sampled
                 noise = [None] * self.num_layers
             else:
                 noise = [
@@ -577,21 +587,27 @@ class Generator(nn.Module):
         print("Calling self.conv1 with latent of shape " + str(latent.shape))
         if (type(noise) == list):
             print("Noise is of type list and has len: " + str(len(noise)))
+            if (type(noise[0]) == list):
+                print("Noise is a 2d list with internal len of: " + str(len(noise[0])))
+            else:
+                print("Noise internally is not a list and has value: " + str(noise[0]))
         else:
-        out = self.conv1(low_res_images, latent, noise=noise[0])
+            print("Shape of noise is: " + str(noise.shape))
 
+        out = self.conv1(low_res_images, latent, noise=noise[0])
         skip = self.to_rgb1(out, latent[:, 1])
 
         i = 1
         for conv1, conv2, noise1, noise2, to_rgb in zip(
             self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
         ):
+            print("Shape of out is: " + str(out.shape))
             out = conv1(out, latent, noise=noise1)
             out = conv2(out, latent, noise=noise2)
             skip = to_rgb(out, latent, skip)
 
             i += 2
-
+        print("Final shape is image: " + skip.shape)
         image = skip
 
         if return_latents:
