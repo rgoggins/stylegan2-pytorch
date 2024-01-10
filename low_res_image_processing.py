@@ -33,8 +33,9 @@ class ResizeIfSmaller(object):
         else:
             return sample
 
-
-image_size=256
+# generating embeddings does not work on 256
+# works on 224, does not work on 64
+image_size=24
 
 preproc = transforms.Compose([
     ResizeIfSmaller(image_size),

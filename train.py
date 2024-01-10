@@ -178,6 +178,13 @@ def set_grad_none(model, targets):
         if n in targets:
             p.grad = None
 
+def gen_embeds(real_images):
+    resized_images = F.interpolate(real_images,
+                                   size=(224, 224),
+                                   mode='bilinear',
+                                   align_corners=False)
+    return resized_images
+
 def generate_low_res_versions(real_images,multiplier):
     _,_,w,h = real_images.shape
     resized_images = F.interpolate(real_images,
@@ -237,15 +244,19 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
 
         img_64 = img_64.to(device)
         img_128 = img_128.to(device)
-        # real_img = real_img.to(device) 
+
+        # Generate embeddings for img64 (need to resize to 224)
+        embeds_for_low_res_imgs = gen_embeds(img_64)
+        embeds_for_low_res_imgs = embeds_for_low_res_imgs.to(device)
 
         requires_grad(generator, False)
         requires_grad(discriminator, True)
 
-        noise = mixing_noise(args.batch, args.latent, args.mixing, device)
+        # We do not need latents
+        # noise = mixing_noise(args.batch, args.latent, args.mixing, device)
 
         # adjust generator to take in low-res photo and latent representation in the place of noise
-        fake_img, _ = generator(noise)
+        fake_img, _ = generator(img64, embeds_for_low_res_imgs)
 
         if args.augment:
             real_img_aug, _ = augment(real_img, ada_aug_p)
