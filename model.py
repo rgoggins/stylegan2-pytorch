@@ -567,7 +567,7 @@ class Generator(nn.Module):
         latent = embeds_for_low_res_imgs
         # OUT is our input
         # out = self.input(latent) # self.input is our constant network, no need anymore
-        out = self.conv1(low_res_images, latent[:, 0], noise=noise[0])
+        out = self.conv1(low_res_images, latent, noise=noise[0])
 
         skip = self.to_rgb1(out, latent[:, 1])
 
