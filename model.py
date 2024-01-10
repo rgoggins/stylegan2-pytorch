@@ -154,6 +154,7 @@ class EqualLinear(nn.Module):
             # input is (7168, 224)
             # self.weight is out_dim,in_dim (512, 512)
             # self.scale is scalar
+            print("Input dimension")
             out = F.linear(input, self.weight * self.scale)
             out = fused_leaky_relu(out, self.bias * self.lr_mul)
 
@@ -215,7 +216,8 @@ class ModulatedConv2d(nn.Module):
         self.weight = nn.Parameter(
             torch.randn(1, out_channel, in_channel, kernel_size, kernel_size)
         )
-
+        # self modulation is 512 , 32 ?
+        print("Generating a self.modulation EqualLinear layer of dimension: " + str(style_dim) + "," + str(in_channel))
         self.modulation = EqualLinear(style_dim, in_channel, bias_init=1)
 
         self.demodulate = demodulate
@@ -259,6 +261,7 @@ class ModulatedConv2d(nn.Module):
 
             return out
 
+        # this is where it breaks, 
         style = self.modulation(style).view(batch, 1, in_channel, 1, 1)
         weight = self.scale * self.weight * style
 
@@ -430,7 +433,7 @@ class Generator(nn.Module):
             128: 128 * channel_multiplier,
             256: 64 * channel_multiplier,
             512: 32 * channel_multiplier,
-            1024: 16 * channel_multiplier,
+            1024: 16 * channel_multiplier, # 16*1024 = 16,384
         }
 
         # self.input = ConstantInput(self.channels[4])
@@ -451,7 +454,8 @@ class Generator(nn.Module):
 
         for layer_idx in range(self.num_layers):
             res = (layer_idx + 5) // 2
-            shape = [1, 1, 2 ** res, 2 ** res]
+            # hard code in batch size for now to get buffers to work
+            shape = [32, 1, 1, 2 ** res, 2 ** res]
             self.noises.register_buffer(f"noise_{layer_idx}", torch.randn(*shape))
 
         for i in range(3, self.log_size + 1):
@@ -567,6 +571,13 @@ class Generator(nn.Module):
         latent = embeds_for_low_res_imgs
         # OUT is our input
         # out = self.input(latent) # self.input is our constant network, no need anymore
+
+        # this is the call that is breaking everything
+        print("Calling self.conv1 with low_res_images of shape " + str(low_res_images.shape))
+        print("Calling self.conv1 with latent of shape " + str(latent.shape))
+        if (type(noise) == list):
+            print("Noise is of type list and has len: " + str(len(noise)))
+        else:
         out = self.conv1(low_res_images, latent, noise=noise[0])
 
         skip = self.to_rgb1(out, latent[:, 1])
