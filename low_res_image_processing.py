@@ -3,6 +3,7 @@ import importlib
 import torch
 import torchvision.transforms as transforms
 from tqdm import tqdm
+from transformers import CLIPModel
 
 wds = importlib.reload(wds)
 
@@ -52,7 +53,7 @@ dataset = (
     .decode("pil")
     .to_tuple("jpg", "json")
     .map_tuple(preproc, identity)
-    #.batched(32) # we want this to be batched
+    #.batched(32) # we specify the batching in DataLoader instance
 )
 
 def collate_fn(batch):
@@ -66,4 +67,9 @@ for img, js in tqdm(dloader):
     print("Image has shape: " + str(img))
     print("type: " + str(type(img)))
     print("Shape: " + str(img.shape))
+    print("Initializing model: ")
+    model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+    outputs = model.get_image_features(img)
+    print("Outputs/embeddings for the batch: " + str(outputs))
+    print("shape of outputs: " + str(outputs.shape))
     exit(0)

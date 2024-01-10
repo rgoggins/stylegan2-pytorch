@@ -178,8 +178,13 @@ def set_grad_none(model, targets):
         if n in targets:
             p.grad = None
 
-def generate_low_res_versions(real_image):
-    pass
+def generate_low_res_versions(real_images,multiplier):
+    _,_,w,h = real_images.shape
+    resized_images = F.interpolate(real_images,
+                                   size=(w // multiplier, h // multiplier),
+                                   mode='bilinear',
+                                   align_corners=False)
+    return resized_images
 
 def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, device):
     loader = sample_data(loader)
@@ -226,10 +231,13 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
 
         real_img = next(loader)
         print("Value of real_img: " + str(real_img))
-        low_res_real_img = generate_low_res_versions(real_img)
+        # real_img torch.Tensor [32,3,256,256]
+        img_64 = generate_low_res_versions(real_img,4) # 32, 3, 64, 64
+        img_128 = generate_low_res_versions(real_img,2) # 32, 3, 128, 128
 
-
-        real_img = real_img.to(device)
+        img_64 = img_64.to(device)
+        img_128 = img_128.to(device)
+        # real_img = real_img.to(device) 
 
         requires_grad(generator, False)
         requires_grad(discriminator, True)
