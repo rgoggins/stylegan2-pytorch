@@ -123,6 +123,9 @@ def d_logistic_loss(real_pred, fake_pred):
 
     return real_loss.mean() + fake_loss.mean()
 
+def d_wgan(real_pred, fake_pred):
+    return real_pred.mean() - fake_pred.mean()
+
 
 def d_r1_loss(real_pred, real_img):
     with conv2d_gradfix.no_weight_gradients():
@@ -240,10 +243,10 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
         print("Value of real_img: " + str(real_img))
         # real_img torch.Tensor [32,3,256,256]
         img_64 = generate_low_res_versions(real_img,4) # 32, 3, 64, 64
-        img_128 = generate_low_res_versions(real_img,2) # 32, 3, 128, 128
+        real_img_128 = generate_low_res_versions(real_img,2) # 32, 3, 128, 128
 
         img_64 = img_64.to(device)
-        img_128 = img_128.to(device)
+        real_img_128 = real_img_128.to(device)
 
         # Generate embeddings for img64 (need to resize to 224)
         embeds_for_low_res_imgs = gen_embeds(img_64)
@@ -256,18 +259,20 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
         # noise = mixing_noise(args.batch, args.latent, args.mixing, device)
 
         # adjust generator to take in low-res photo and latent representation in the place of noise
-        fake_img, _ = generator(img64, embeds_for_low_res_imgs)
+        fake_img_128, _ = generator(img_64, embeds_for_low_res_imgs)
 
-        if args.augment:
-            real_img_aug, _ = augment(real_img, ada_aug_p)
-            fake_img, _ = augment(fake_img, ada_aug_p)
+        # if args.augment:
+        #     real_img_aug, _ = augment(real_img, ada_aug_p)
+        #     fake_img, _ = augment(fake_img, ada_aug_p)
 
-        else:
-            real_img_aug = real_img
+        # else:
+        #     real_img_aug = real_img
 
-        fake_pred = discriminator(fake_img)
-        real_pred = discriminator(real_img_aug)
-        d_loss = d_logistic_loss(real_pred, fake_pred)
+        fake_pred = discriminator(fake_img_128)
+        real_pred = discriminator(real_img_128)
+
+        # Compute discriminator loss (wasserstein loss)
+        d_loss = d_wgan(real_pred, fake_pred)
 
         loss_dict["d"] = d_loss
         loss_dict["real_score"] = real_pred.mean()
