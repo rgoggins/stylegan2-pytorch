@@ -12,9 +12,13 @@ import torch.distributed as dist
 from torchvision import transforms, utils
 from tqdm import tqdm
 from lpips import PerceptualLoss
+from transformers import CLIPModel
 
 import webdataset as wds
 import importlib
+
+model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+
 wds = importlib.reload(wds)
 url = 'pipe:aws s3 cp s3://laion-super-resolution/{00000..16000}.tar - --endpoint-url=https://s3.eu-central-1.wasabisys.com'
 
@@ -189,7 +193,8 @@ def gen_embeds(real_images):
                                    size=(224, 224),
                                    mode='bilinear',
                                    align_corners=False)
-    return resized_images
+    outputs = model.get_image_features(resized_images)
+    return outputs
 
 def generate_low_res_versions(real_images,multiplier):
     # real_images is a list (images,js)
@@ -202,6 +207,8 @@ def generate_low_res_versions(real_images,multiplier):
 
 def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, device):
     print("Beginning train func.")
+
+
     loader = sample_data(loader)
 
     pbar = range(args.iter)

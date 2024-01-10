@@ -150,7 +150,8 @@ class EqualLinear(nn.Module):
 
     def forward(self, input):
         if self.activation:
-            # input is (672, 224)
+            # 7168 =32 * 224
+            # input is (7168, 224)
             # self.weight is out_dim,in_dim (512, 512)
             # self.scale is scalar
             out = F.linear(input, self.weight * self.scale)
