@@ -52,7 +52,7 @@ dataset = (
     .decode("pil")
     .to_tuple("jpg", "json")
     .map_tuple(preproc, identity)
-    .batched(32) # we want this to be batched
+    #.batched(32) # we want this to be batched
 )
 
 def collate_fn(batch):
