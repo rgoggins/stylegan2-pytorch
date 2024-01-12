@@ -160,10 +160,13 @@ class EqualLinear(nn.Module):
             out = F.linear(input, self.weight * self.scale)
             out = fused_leaky_relu(out, self.bias * self.lr_mul)
 
-        else:
+        else: # this is throwing the errs
+            bs, embed_dim, in_chan, out_chan = input.shape
+            input = input.view(bs,in_chan,out_chan,embed_dim)
             out = F.linear(
                 input, self.weight * self.scale, bias=self.bias * self.lr_mul
             )
+            print("Okay, computed output, should be 32, 4, 4, 512: " + str(out.shape))
 
         return out
 
@@ -233,7 +236,10 @@ class ModulatedConv2d(nn.Module):
 
     def forward(self, input, style):
         batch, in_channel, height, width = input.shape
-        # style is not meant to be 
+        in_channel = 512# self.in_channel # critical change
+        # formerly, input is output of the self.input(latent) which
+        # is basically a constant latent code of high dimension,
+        # this is not meant to translate to rgb channels
 
         if not self.fused:
             print("NOT SELF FUSED")
@@ -270,7 +276,8 @@ class ModulatedConv2d(nn.Module):
         # this is where it breaks,
         # do we want to do modulation?
         print("Shape of style going in: " + str(style.shape))
-        print("Why is in_channel 3 here?") 
+        print("Why is in_channel 3 here? It shoudl be set to 512") 
+        print("In_channel is " + str(in_channel) + " but self.in_channel is " + str(self.in_channel))
         style = self.modulation(style).view(batch, 1, in_channel, 1, 1)
         weight = self.scale * self.weight * style
 
@@ -374,7 +381,9 @@ class StyledConv(nn.Module):
         self.activate = FusedLeakyReLU(out_channel)
 
     def forward(self, input, style, noise=None):
+        print("Calling self.conv within StyledConv forward")
         out = self.conv(input, style)
+        print("Calling self.noise within StyledConv forward")
         out = self.noise(out, noise=noise)
         # out = out + self.bias
         out = self.activate(out)
@@ -445,7 +454,7 @@ class Generator(nn.Module):
             1024: 16 * channel_multiplier, # 16*1024 = 16,384
         }
 
-        # self.input = ConstantInput(self.channels[4])
+        self.input = ConstantInput(self.channels[4])
         self.conv1 = StyledConv(
             self.channels[4], self.channels[4], 3, style_dim, blur_kernel=blur_kernel
         )
@@ -530,7 +539,11 @@ class Generator(nn.Module):
     ):
         print("Dimensionality of input low res images to forward pass of generator is: " + str(low_res_images.shape))
         print("Dimensionality of input embeddings to forward pass of generator is: " + str(embeds_for_low_res_imgs.shape))
-        
+        print("Shape of embeds before: " + str(embeds_for_low_res_imgs.shape))
+        embeds_for_low_res_imgs = self.style(embeds_for_low_res_imgs)
+        print("Shape of embeds after: " + str(embeds_for_low_res_imgs.shape))
+        # exit(0)
+
         # if not input_is_latent:
         #     # removing the call to the mapping network
         #     embeds_for_low_res_imgs = [s for s in embeds_for_low_res_imgs]
@@ -580,7 +593,7 @@ class Generator(nn.Module):
         #     latent = torch.cat([latent, latent2], 1)
         latent = embeds_for_low_res_imgs
         # OUT is our input
-        # out = self.input(latent) # self.input is our constant network, no need anymore
+        latent = self.input(latent) # self.input is our constant network, no need anymore
 
         # this is the call that is breaking everything
         print("Calling self.conv1 with low_res_images of shape " + str(low_res_images.shape))
@@ -595,6 +608,7 @@ class Generator(nn.Module):
             print("Shape of noise is: " + str(noise.shape))
 
         out = self.conv1(low_res_images, latent, noise=noise[0])
+        print("Successfully completed self.conv1 call!")
         skip = self.to_rgb1(out, latent[:, 1])
 
         i = 1

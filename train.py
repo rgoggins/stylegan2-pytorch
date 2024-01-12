@@ -10,14 +10,22 @@ from torch.nn import functional as F
 from torch.utils import data
 import torch.distributed as dist
 from torchvision import transforms, utils
+# import open_clip
+
 from tqdm import tqdm
 from lpips import PerceptualLoss
 from transformers import CLIPModel
 
 import webdataset as wds
 import importlib
+# import logging
+# logging.basicConfig(level=logging.INFO)  # Or use logging.ERROR for only errors
+
+from transformers import logging as hf_logging
+hf_logging.set_verbosity_info()  # Or use set_verbosity_error() for only errors
 
 model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+# model, _, _ = open_clip.create_model_and_transforms('hf-hub:laion/CLIP-ViT-B-32-laion2B-s34B-b79K')
 
 wds = importlib.reload(wds)
 url = 'pipe:aws s3 cp s3://laion-super-resolution/{00000..16000}.tar - --endpoint-url=https://s3.eu-central-1.wasabisys.com'
@@ -25,54 +33,54 @@ url = 'pipe:aws s3 cp s3://laion-super-resolution/{00000..16000}.tar - --endpoin
 def identity(x):
     return x
 
-class ResizeIfSmaller(object):
-    """Crop randomly the image in a sample.
+# class ResizeIfSmaller(object):
+#     """Crop randomly the image in a sample.
 
-    Args:
-        output_size (tuple or int): Desired output size. If int, square crop
-            is made.
-    """
+#     Args:
+#         output_size (tuple or int): Desired output size. If int, square crop
+#             is made.
+#     """
 
-    def __init__(self, image_size):
-        self.image_size = image_size
+#     def __init__(self, image_size):
+#         self.image_size = image_size
 
-    def __call__(self, sample):
-        H, W = sample.size
+#     def __call__(self, sample):
+#         H, W = sample.size
 
-        if H < self.image_size or W < self.image_size:
-            return transforms.Resize(self.image_size)(sample)
-        else:
-            return sample
+#         if H < self.image_size or W < self.image_size:
+#             return transforms.Resize(self.image_size)(sample)
+#         else:
+#             return sample
 
 
 image_size=256
 
-preproc = transforms.Compose([
-    ResizeIfSmaller(image_size),
-    #transforms.RandomChoice([
-    transforms.RandomCrop(image_size),
-        #transforms.Resize((image_size, image_size)),
-    #]),
-    #transforms.RandomHorizontalFlip(),
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-])
+# preproc = transforms.Compose([
+#     ResizeIfSmaller(image_size),
+#     #transforms.RandomChoice([
+#     transforms.RandomCrop(image_size),
+#         #transforms.Resize((image_size, image_size)),
+#     #]),
+#     #transforms.RandomHorizontalFlip(),
+#     transforms.ToTensor(),
+#     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+# ])
 
-dataset_darius = (
-    wds.WebDataset(url)
-    .shuffle(32)
-    .decode("pil")
-    .to_tuple("jpg", "json")
-    .map_tuple(preproc, identity)
-    #.batched(32)
-)
+# dataset_darius = (
+#     wds.WebDataset(url)
+#     .shuffle(32)
+#     .decode("pil")
+#     .to_tuple("jpg", "json")
+#     .map_tuple(preproc, identity)
+#     #.batched(32)
+# )
 
-def collate_fn(batch):
-    images = torch.cat([x[0].unsqueeze(0) for x in batch], dim=0)
-    js = [x[1] for x in batch]
-    return images, js
+# def collate_fn(batch):
+#     images = torch.cat([x[0].unsqueeze(0) for x in batch], dim=0)
+#     js = [x[1] for x in batch]
+#     return images, js
 
-dloader = torch.utils.data.DataLoader(dataset_darius, batch_size=32, num_workers=16, prefetch_factor=4, pin_memory=True, collate_fn = collate_fn)
+# dloader = torch.utils.data.DataLoader(dataset_darius, batch_size=32, num_workers=16, prefetch_factor=4, pin_memory=True, collate_fn = collate_fn)
 
 
 try:
@@ -80,7 +88,7 @@ try:
 except ImportError:
     wandb = None
 
-from dataset import MultiResolutionDataset
+from dataset import CustomImageDataset
 from distributed import (
     get_rank,
     synchronize,
@@ -193,7 +201,14 @@ def gen_embeds(real_images):
                                    size=(224, 224),
                                    mode='bilinear',
                                    align_corners=False)
+    # resized_images.to(device)
+    resized_images = resized_images.cuda()
+
+    print("About to call model get image features on images: " + str(resized_images.shape) + " of type " + str(type(resized_images)))
+    print("Worth noting the data type: " + str(resized_images.dtype))
+    print("Value of resized_images: " + str(resized_images))
     outputs = model.get_image_features(resized_images)
+    print("Successfully generated the embeddings")
     return outputs
 
 def generate_low_res_versions(real_images,multiplier):
@@ -210,11 +225,13 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
 
 
     loader = sample_data(loader)
-
+    print("d1")
     pbar = range(args.iter)
+    print("Defining rank and other stuff")
 
     if get_rank() == 0:
         pbar = tqdm(pbar, initial=args.start_iter, dynamic_ncols=True, smoothing=0.01)
+    print("d2")
 
     mean_path_length = 0
 
@@ -225,6 +242,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
     path_lengths = torch.tensor(0.0, device=device)
     mean_path_length_avg = 0
     loss_dict = {}
+    print("d3")
 
     if args.distributed:
         g_module = generator.module
@@ -233,6 +251,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
     else:
         g_module = generator
         d_module = discriminator
+    print("d4")
 
     accum = 0.5 ** (32 / (10 * 1000))
     ada_aug_p = args.augment_p if args.augment_p > 0 else 0.0
@@ -244,26 +263,29 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
     sample_z = torch.randn(args.n_sample, args.latent, device=device)
 
     for idx in pbar:
+        print("Iterating through pbar")
         i = idx + args.start_iter
 
         if i > args.iter:
             print("Done!")
 
             break
-
-        real_img = next(loader)[0] # index into collation
+        print("Calling next on loader")
+        real_img = next(loader) # index into collation (no need on celeb-A)
         # print("Value of real_img: " + str(real_img))
         # real_img torch.Tensor [32,3,256,256]
+        print("Calling gen low res versions")
         img_64 = generate_low_res_versions(real_img,4) # 32, 3, 64, 64
         real_img_128 = generate_low_res_versions(real_img,2) # 32, 3, 128, 128
-
+        print("switching to device")
         real_img_128 = real_img_128.to(device)
-
         # Generate embeddings for img64 (need to resize to 224)
-        embeds_for_low_res_imgs = gen_embeds(img_64)
+        print("Generating the embeds")
         img_64 = img_64.to(device)
+        embeds_for_low_res_imgs = gen_embeds(img_64)
+        print("Done generating the embeds")
         embeds_for_low_res_imgs = embeds_for_low_res_imgs.to(device)
-
+        print("Train generator!")
         # TRAIN GENERATOR:
 
         requires_grad(generator, True)
@@ -573,6 +595,9 @@ if __name__ == "__main__":
     g_ema.eval()
     accumulate(g_ema, generator, 0)
 
+    # put the clip model also on gpu
+    model = model.to(device)
+
     g_reg_ratio = args.g_reg_every / (args.g_reg_every + 1)
     d_reg_ratio = args.d_reg_every / (args.d_reg_every + 1)
 
@@ -607,8 +632,8 @@ if __name__ == "__main__":
         g_optim.load_state_dict(ckpt["g_optim"])
         d_optim.load_state_dict(ckpt["d_optim"])
 
-    print("Setting up distributed training")
     if args.distributed:
+        print("Setting up distributed training")
         generator = nn.parallel.DistributedDataParallel(
             generator,
             device_ids=[args.local_rank],
@@ -622,23 +647,26 @@ if __name__ == "__main__":
             output_device=args.local_rank,
             broadcast_buffers=False,
         )
-    print("Done setting up distributed training")
+    else:
+        print("Not setting up dist training")
     transform = transforms.Compose(
         [
+            transforms.Resize((256,256)),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True),
         ]
     )
 
-    # dataset = MultiResolutionDataset(args.path, transform, args.size)
-    loader = dloader
-    # data.DataLoader(
-    #     dataset,
-    #     batch_size=args.batch,
-    #     sampler=data_sampler(dataset, shuffle=True, distributed=args.distributed),
-    #     drop_last=True,
-    # )
+    dataset = CustomImageDataset(args.path, transform)
+    # dataset = torchvision.datasets.ImageFolder(args.path, transform=transform)
+    # loader = dloader
+    loader = data.DataLoader(
+        dataset,
+        batch_size=args.batch,
+        sampler=data_sampler(dataset, shuffle=True, distributed=args.distributed),
+        drop_last=True,
+    )
 
     if get_rank() == 0 and wandb is not None and args.wandb:
         wandb.init(project="stylegan 2")

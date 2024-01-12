@@ -131,3 +131,7 @@ dmypy.json
 wandb/
 *.lmdb/
 *.pkl
+
+
+laion_samples/
+tars/

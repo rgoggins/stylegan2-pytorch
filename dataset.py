@@ -1,40 +1,20 @@
-from io import BytesIO
-
-import lmdb
-from PIL import Image
+import os
 from torch.utils.data import Dataset
+from PIL import Image
+from torchvision import transforms
 
-
-class MultiResolutionDataset(Dataset):
-    def __init__(self, path, transform, resolution=256):
-        self.env = lmdb.open(
-            path,
-            max_readers=32,
-            readonly=True,
-            lock=False,
-            readahead=False,
-            meminit=False,
-        )
-
-        if not self.env:
-            raise IOError('Cannot open lmdb dataset', path)
-
-        with self.env.begin(write=False) as txn:
-            self.length = int(txn.get('length'.encode('utf-8')).decode('utf-8'))
-
-        self.resolution = resolution
+class CustomImageDataset(Dataset):
+    def __init__(self, main_dir, transform=None):
+        self.main_dir = main_dir
         self.transform = transform
+        self.all_imgs = os.listdir(main_dir)
 
     def __len__(self):
-        return self.length
+        return len(self.all_imgs)
 
-    def __getitem__(self, index):
-        with self.env.begin(write=False) as txn:
-            key = f'{self.resolution}-{str(index).zfill(5)}'.encode('utf-8')
-            img_bytes = txn.get(key)
-
-        buffer = BytesIO(img_bytes)
-        img = Image.open(buffer)
-        img = self.transform(img)
-
-        return img
+    def __getitem__(self, idx):
+        img_loc = os.path.join(self.main_dir, self.all_imgs[idx])
+        image = Image.open(img_loc).convert("RGB")
+        if self.transform is not None:
+            tensor_image = self.transform(image)
+        return tensor_image
