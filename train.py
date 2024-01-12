@@ -18,11 +18,18 @@ from transformers import CLIPModel
 
 import webdataset as wds
 import importlib
+
+# import os
+
+# Set max_split_size_mb, we are ooming way too often
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'  # Example with 128 MB
+
+
 # import logging
 # logging.basicConfig(level=logging.INFO)  # Or use logging.ERROR for only errors
 
-from transformers import logging as hf_logging
-hf_logging.set_verbosity_info()  # Or use set_verbosity_error() for only errors
+# from transformers import logging as hf_logging
+# hf_logging.set_verbosity_info()  # Or use set_verbosity_error() for only errors
 
 model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 # model, _, _ = open_clip.create_model_and_transforms('hf-hub:laion/CLIP-ViT-B-32-laion2B-s34B-b79K')
@@ -201,14 +208,14 @@ def gen_embeds(real_images):
                                    size=(224, 224),
                                    mode='bilinear',
                                    align_corners=False)
-    # resized_images.to(device)
-    resized_images = resized_images.cuda()
+    resized_images.to(device)
+    # resized_images = resized_images.cuda()
 
-    print("About to call model get image features on images: " + str(resized_images.shape) + " of type " + str(type(resized_images)))
-    print("Worth noting the data type: " + str(resized_images.dtype))
-    print("Value of resized_images: " + str(resized_images))
+    # print("About to call model get image features on images: " + str(resized_images.shape) + " of type " + str(type(resized_images)))
+    # print("Worth noting the data type: " + str(resized_images.dtype))
+    # print("Value of resized_images: " + str(resized_images))
     outputs = model.get_image_features(resized_images)
-    print("Successfully generated the embeddings")
+    # print("Successfully generated the embeddings")
     return outputs
 
 def generate_low_res_versions(real_images,multiplier):
@@ -221,17 +228,16 @@ def generate_low_res_versions(real_images,multiplier):
     return resized_images
 
 def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, device):
-    print("Beginning train func.")
-
+    print("Beginning training...")
 
     loader = sample_data(loader)
-    print("d1")
+
     pbar = range(args.iter)
-    print("Defining rank and other stuff")
+
 
     if get_rank() == 0:
         pbar = tqdm(pbar, initial=args.start_iter, dynamic_ncols=True, smoothing=0.01)
-    print("d2")
+
 
     mean_path_length = 0
 
@@ -242,7 +248,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
     path_lengths = torch.tensor(0.0, device=device)
     mean_path_length_avg = 0
     loss_dict = {}
-    print("d3")
+
 
     if args.distributed:
         g_module = generator.module
@@ -251,7 +257,6 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
     else:
         g_module = generator
         d_module = discriminator
-    print("d4")
 
     accum = 0.5 ** (32 / (10 * 1000))
     ada_aug_p = args.augment_p if args.augment_p > 0 else 0.0
@@ -270,22 +275,16 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
             print("Done!")
 
             break
-        print("Calling next on loader")
+
         real_img = next(loader) # index into collation (no need on celeb-A)
-        # print("Value of real_img: " + str(real_img))
-        # real_img torch.Tensor [32,3,256,256]
-        print("Calling gen low res versions")
         img_64 = generate_low_res_versions(real_img,4) # 32, 3, 64, 64
         real_img_128 = generate_low_res_versions(real_img,2) # 32, 3, 128, 128
-        print("switching to device")
         real_img_128 = real_img_128.to(device)
         # Generate embeddings for img64 (need to resize to 224)
-        print("Generating the embeds")
         img_64 = img_64.to(device)
         embeds_for_low_res_imgs = gen_embeds(img_64)
-        print("Done generating the embeds")
         embeds_for_low_res_imgs = embeds_for_low_res_imgs.to(device)
-        print("Train generator!")
+
         # TRAIN GENERATOR:
 
         requires_grad(generator, True)
@@ -457,7 +456,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
 
 if __name__ == "__main__":
     print("Running main")
-    device = "cuda"
+    device = "cpu"
 
     parser = argparse.ArgumentParser(description="StyleGAN2 trainer")
 
@@ -554,10 +553,10 @@ if __name__ == "__main__":
         default=256,
         help="probability update interval of the adaptive augmentation",
     )
-
+    torch.cuda.empty_cache()
     args = parser.parse_args()
 
-    args.local_rank = int(os.environ['LOCAL_RANK'])
+    # args.local_rank = int(os.environ['LOCAL_RANK'])
 
     print("Parsed args successfully")
 
@@ -589,14 +588,42 @@ if __name__ == "__main__":
         args.size, channel_multiplier=args.channel_multiplier
     ).to(device)
     print("Created discriminator")
-    g_ema = Generator(
-        args.size, args.latent, args.n_mlp, channel_multiplier=args.channel_multiplier
-    ).to(device)
-    g_ema.eval()
-    accumulate(g_ema, generator, 0)
+    g_ema = None
+    # Generator(
+    #     args.size, args.latent, args.n_mlp, channel_multiplier=args.channel_multiplier
+    # ).to(device)
+    # g_ema.eval()
+    # accumulate(g_ema, generator, 0)
+
+    total_params = sum(p.numel() for p in generator.parameters())
+    print(f"Total generator parameters: {total_params}")
+
+    # Calculating the size of all parameters
+    def sizeof_fmt(num, suffix='B'):
+        for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+            if abs(num) < 1024.0:
+                return "%3.1f %s%s" % (num, unit, suffix)
+            num /= 1024.0
+        return "%.1f %s%s" % (num, 'Yi', suffix)
+
+    param_size = sum(p.numel() * p.element_size() for p in generator.parameters())
+    print(f"Size of generator parameters: {sizeof_fmt(param_size)}")
+
+    total_params = sum(p.numel() for p in discriminator.parameters())
+    print(f"Total discriminator parameters: {total_params}")
+
+    param_size = sum(p.numel() * p.element_size() for p in discriminator.parameters())
+    print(f"Size of discriminator parameters: {sizeof_fmt(param_size)}")
 
     # put the clip model also on gpu
     model = model.to(device)
+
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Total CLIP encoder parameters: {total_params}")
+
+    param_size = sum(p.numel() * p.element_size() for p in model.parameters())
+    print(f"Size of CLIP encoder parameters: {sizeof_fmt(param_size)}")
+
 
     g_reg_ratio = args.g_reg_every / (args.g_reg_every + 1)
     d_reg_ratio = args.d_reg_every / (args.d_reg_every + 1)
@@ -671,4 +698,9 @@ if __name__ == "__main__":
     if get_rank() == 0 and wandb is not None and args.wandb:
         wandb.init(project="stylegan 2")
 
-    train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, device)
+    with torch.autograd.profiler.profile(use_cuda=True) as prof:
+        # try:
+        train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, device)
+        # except Exception as e:
+        #     print(f"An error of type {type(e).__name__} occurred: {e}")
+    print(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))

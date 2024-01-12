@@ -134,7 +134,7 @@ class EqualLinear(nn.Module):
         self, in_dim, out_dim, bias=True, bias_init=0, lr_mul=1, activation=None
     ):
         super().__init__()
-        print("Equal linear created for weight matrix " + str(out_dim) + "," + str(in_dim))
+
         self.weight = nn.Parameter(torch.randn(out_dim, in_dim).div_(lr_mul))
 
         if bias:
@@ -149,24 +149,16 @@ class EqualLinear(nn.Module):
         self.lr_mul = lr_mul
 
     def forward(self, input):
-        print("Weight matrix for (self.modulation) is of shape: " + str(self.weight.shape))
-        print("Input shape to self.modulation is " + str(input.shape))
-        print("Note: the first param should be embedding dim, second should be in_channel")
+        # print("And self.weight in equallinear is of dimension " + str(self.weight.shape))
+
         if self.activation:
-            # 7168 =32 * 224
-            # input is (7168, 224)
-            # self.weight is out_dim,in_dim (512, 512)
-            # self.scale is scalar
             out = F.linear(input, self.weight * self.scale)
             out = fused_leaky_relu(out, self.bias * self.lr_mul)
 
-        else: # this is throwing the errs
-            bs, embed_dim, in_chan, out_chan = input.shape
-            input = input.view(bs,in_chan,out_chan,embed_dim)
+        else:
             out = F.linear(
                 input, self.weight * self.scale, bias=self.bias * self.lr_mul
             )
-            print("Okay, computed output, should be 32, 4, 4, 512: " + str(out.shape))
 
         return out
 
@@ -221,8 +213,7 @@ class ModulatedConv2d(nn.Module):
         self.weight = nn.Parameter(
             torch.randn(1, out_channel, in_channel, kernel_size, kernel_size)
         )
-        # self modulation is 512 , 32 ?
-        print("Generating a self.modulation EqualLinear layer of dimension: " + str(style_dim) + "," + str(in_channel))
+
         self.modulation = EqualLinear(style_dim, in_channel, bias_init=1)
 
         self.demodulate = demodulate
@@ -236,13 +227,8 @@ class ModulatedConv2d(nn.Module):
 
     def forward(self, input, style):
         batch, in_channel, height, width = input.shape
-        in_channel = 512# self.in_channel # critical change
-        # formerly, input is output of the self.input(latent) which
-        # is basically a constant latent code of high dimension,
-        # this is not meant to translate to rgb channels
 
         if not self.fused:
-            print("NOT SELF FUSED")
             weight = self.scale * self.weight.squeeze(0)
             style = self.modulation(style)
 
@@ -270,14 +256,8 @@ class ModulatedConv2d(nn.Module):
                 out = out * dcoefs.view(batch, -1, 1, 1)
 
             return out
-        else:
-            print("SELF FUSED")
 
-        # this is where it breaks,
-        # do we want to do modulation?
-        print("Shape of style going in: " + str(style.shape))
-        print("Why is in_channel 3 here? It shoudl be set to 512") 
-        print("In_channel is " + str(in_channel) + " but self.in_channel is " + str(self.in_channel))
+        # print("In self.modulation(style) call, style is of shape: " + str(style.shape) + ", batch is " + str(batch) + " and in_channel is " + str(in_channel))
         style = self.modulation(style).view(batch, 1, in_channel, 1, 1)
         weight = self.scale * self.weight * style
 
@@ -351,6 +331,22 @@ class ConstantInput(nn.Module):
 
         return out
 
+class ExpandingConvNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.initial_conv_transforms = nn.ModuleList([
+            nn.Conv2d(in_channels=3, out_channels=128, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, stride=1, padding=1),
+        ])
+    
+    def forward(self, x):
+        for layer in self.initial_conv_transforms:
+            x = layer(x)
+        return x
+
+
 
 class StyledConv(nn.Module):
     def __init__(
@@ -381,9 +377,9 @@ class StyledConv(nn.Module):
         self.activate = FusedLeakyReLU(out_channel)
 
     def forward(self, input, style, noise=None):
-        print("Calling self.conv within StyledConv forward")
+        # print("Calling self.conv within StyledConv forward")
         out = self.conv(input, style)
-        print("Calling self.noise within StyledConv forward")
+        # print("Calling self.noise within StyledConv forward")
         out = self.noise(out, noise=noise)
         # out = out + self.bias
         out = self.activate(out)
@@ -460,9 +456,11 @@ class Generator(nn.Module):
         )
         self.to_rgb1 = ToRGB(self.channels[4], style_dim, upsample=False)
 
-        self.log_size = int(math.log(size, 2))
-        self.num_layers = (self.log_size - 2) * 2 + 1
+        self.log_size = int(math.log(size, 2)) #                8
+        self.num_layers = (self.log_size - 2) * 2 + 1 #         13
 
+        # Need conv layers to transform input channel to a reasonable size
+        self.initial_conv_transforms = ExpandingConvNet()
         self.convs = nn.ModuleList()
         self.upsamples = nn.ModuleList()
         self.to_rgbs = nn.ModuleList()
@@ -470,10 +468,10 @@ class Generator(nn.Module):
 
         in_channel = self.channels[4]
 
-        for layer_idx in range(self.num_layers):
+        for layer_idx in range(self.num_layers//2, self.num_layers):
             res = (layer_idx + 5) // 2
             # hard code in batch size for now to get buffers to work
-            shape = [32, 1, 1, 2 ** res, 2 ** res]
+            shape = [1, 1, 1, 2 ** res, 2 ** res]
             self.noises.register_buffer(f"noise_{layer_idx}", torch.randn(*shape))
 
         for i in range(3, self.log_size + 1):
@@ -537,16 +535,12 @@ class Generator(nn.Module):
         noise=None,
         randomize_noise=True,
     ):
-        print("Dimensionality of input low res images to forward pass of generator is: " + str(low_res_images.shape))
-        print("Dimensionality of input embeddings to forward pass of generator is: " + str(embeds_for_low_res_imgs.shape))
-        print("Shape of embeds before: " + str(embeds_for_low_res_imgs.shape))
+        # print("Dimensionality of input low res images to forward pass of generator is: " + str(low_res_images.shape))
+        # print("Dimensionality of input embeddings to forward pass of generator is: " + str(embeds_for_low_res_imgs.shape))
+        # print("Shape of embeds before: " + str(embeds_for_low_res_imgs.shape))
         embeds_for_low_res_imgs = self.style(embeds_for_low_res_imgs)
-        print("Shape of embeds after: " + str(embeds_for_low_res_imgs.shape))
-        # exit(0)
-
-        # if not input_is_latent:
-        #     # removing the call to the mapping network
-        #     embeds_for_low_res_imgs = [s for s in embeds_for_low_res_imgs]
+        embeds_for_low_res_imgs = [embeds_for_low_res_imgs, embeds_for_low_res_imgs]
+        # print("Shape of embeds after: " + str(embeds_for_low_res_imgs.shape))
 
         # We generate the noise randomly, we can try seeding this in the future for reproducibility
         if noise is None:
@@ -572,54 +566,49 @@ class Generator(nn.Module):
         #     styles = style_t
 
         # I think we still need this to process/reshape our embeddings to make sure they fit
-        # if len(embeds_for_low_res_imgs) < 2:
-        #     inject_index = self.n_latent
+        if len(embeds_for_low_res_imgs) < 2:
+            inject_index = self.n_latent
 
-        #     if embeds_for_low_res_imgs[0].ndim < 3:
-        #         latent = embeds_for_low_res_imgs[0].unsqueeze(1).repeat(1, inject_index, 1)
+            if embeds_for_low_res_imgs[0].ndim < 3:
+                latent = embeds_for_low_res_imgs[0].unsqueeze(1).repeat(1, inject_index, 1)
 
-        #     else:
-        #         latent = embeds_for_low_res_imgs[0]
+            else:
+                latent = embeds_for_low_res_imgs[0]
 
         # we don't need this portion because our embedding will be the same across
         # all of our layers
-        # else:
-        #     if inject_index is None:
-        #         inject_index = random.randint(1, self.n_latent - 1)
-
-        #     latent = embeds_for_low_res_imgs[0].unsqueeze(1).repeat(1, inject_index, 1)
-        #     latent2 = embeds_for_low_res_imgs[1].unsqueeze(1).repeat(1, self.n_latent - inject_index, 1)
-
-        #     latent = torch.cat([latent, latent2], 1)
-        latent = embeds_for_low_res_imgs
-        # OUT is our input
-        latent = self.input(latent) # self.input is our constant network, no need anymore
-
-        # this is the call that is breaking everything
-        print("Calling self.conv1 with low_res_images of shape " + str(low_res_images.shape))
-        print("Calling self.conv1 with latent of shape " + str(latent.shape))
-        if (type(noise) == list):
-            print("Noise is of type list and has len: " + str(len(noise)))
-            if (type(noise[0]) == list):
-                print("Noise is a 2d list with internal len of: " + str(len(noise[0])))
-            else:
-                print("Noise internally is not a list and has value: " + str(noise[0]))
         else:
-            print("Shape of noise is: " + str(noise.shape))
+            if inject_index is None:
+                inject_index = random.randint(1, self.n_latent - 1)
 
-        out = self.conv1(low_res_images, latent, noise=noise[0])
-        print("Successfully completed self.conv1 call!")
+            latent = embeds_for_low_res_imgs[0].unsqueeze(1).repeat(1, inject_index, 1)
+            latent2 = embeds_for_low_res_imgs[1].unsqueeze(1).repeat(1, self.n_latent - inject_index, 1)
+
+            latent = torch.cat([latent, latent2], 1)
+        # latent = embeds_for_low_res_imgs
+        # OUT is our input
+        # out = self.input(latent) # self.input is our constant network, no need anymore
+
+        low_res_images = self.initial_conv_transforms(low_res_images)
+        # print("Transforming our image into expanded form...")
+
+        # print("HEREEEEE, latent needs to be of shape (batch_size, n_latents, 512) and it is of shape: " + str(latent.shape))
+        # print("HEREEEEE, low_res_images (the first input to self.conv1) needs to be of shape (batch_size, 512, size, size) (size is 4) and it is of shape: " + str(low_res_images.shape))
+        out = self.conv1(low_res_images, latent[:, 0], noise=noise[0])
+        # print("Successfully completed self.conv1 call!")
         skip = self.to_rgb1(out, latent[:, 1])
-
+        print("Going through layers")
         i = 1
         for conv1, conv2, noise1, noise2, to_rgb in zip(
             self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
         ):
-            print("Shape of out is: " + str(out.shape))
-            out = conv1(out, latent, noise=noise1)
-            out = conv2(out, latent, noise=noise2)
-            skip = to_rgb(out, latent, skip)
-
+            print("loop, conv1 is of size: " + str(sum([p.numel() for p in conv1.parameters()])))
+            out = conv1(out, latent[:, i], noise=noise1)
+            print("loop, conv2 is of size: " + str(sum([p.numel() for p in conv2.parameters()])))
+            out = conv2(out, latent[:, i + 1], noise=noise2)
+            print("loop, to_rgb is of size: " +str(sum([p.numel() for p in to_rgb.parameters()])))
+            skip = to_rgb(out, latent[:, i + 2], skip)
+            print("And the final one?")
             i += 2
         print("Final shape is image: " + skip.shape)
         image = skip
